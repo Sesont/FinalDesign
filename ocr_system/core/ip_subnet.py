@@ -5,7 +5,7 @@
 import re
 from .base_correction import BaseCorrection
 
-class SubnetCorrection(BaseCorrection):
+class IPSubnetCorrection(BaseCorrection):
     def __init__(self):
         super().__init__()
         self.question_type = "子网划分/IP计算"

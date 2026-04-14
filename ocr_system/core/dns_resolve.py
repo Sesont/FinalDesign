@@ -5,7 +5,7 @@ DNS解析过程校正类
 import re
 from .base_correction import BaseCorrection
 
-class DNSCorrection(BaseCorrection):
+class DNSResolveCorrection(BaseCorrection):
     def __init__(self):
         super().__init__()
         self.question_type = "DNS解析过程"

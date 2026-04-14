@@ -9,7 +9,7 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT_DIR)
 
 # 选择题型：TCP三次握手 / OSI七层模型/TCP四次挥手
-SELECTED_QUESTION_TYPE = "TCP四次挥手"
+SELECTED_QUESTION_TYPE = "TCP三次握手"
 
 if __name__ == "__main__":
     try:

@@ -14,3 +14,4 @@ print("tkinter可用：", tkinter is not None)
 print("✅ 所有依赖测试通过！")
 
 print("hello raoshen")
+print("hello zju")
