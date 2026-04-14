@@ -1,0 +1,16 @@
+ocr_system/
+├── core/                  # 核心逻辑层（可扩展多题型）
+│   ├── __init__.py        # 模块导出
+│   ├── base_correction.py # 基础校正框架（所有题型通用）
+│   ├── tcp_handshake.py   # TCP三次握手专属逻辑
+│   ├── tcp_wave.py        # TCP四次挥手专属逻辑
+│   ├── osi_seven_layer.py # OSI七层模型专属逻辑
+│   ├── ip_subnet.py       # 子网划分/IP计算专属逻辑
+│   ├── http_https.py      # HTTP与HTTPS区别专属逻辑
+│   ├── switch_router.py   # 交换机vs路由器专属逻辑
+│   ├── tcp_congestion.py  # TCP拥塞控制专属逻辑
+│   └── dns_resolve.py     # DNS解析过程专属逻辑
+├── ui/                    # 界面层（纯界面，无业务逻辑）
+│   ├── __init__.py        # 模块导出
+│   └── main_ui.py         # 主界面（适配多题型切换）
+└── run.py                 # 程序入口（一键启动）
