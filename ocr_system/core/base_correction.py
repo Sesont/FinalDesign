@@ -1,165 +1,271 @@
 # -*- coding: utf-8 -*-
 """
-基础校正框架（所有题型通用）
-【终极双遍历合并版：支持隔行合并、只保留合并结果、自动生成坐标】
+计网手写识别基类
+通用预处理、OCR、文本分析、坐标合并
 """
 from abc import ABC, abstractmethod
 from paddleocr import PaddleOCR
-from PIL import Image
 import cv2
 import numpy as np
 import re
 
 class BaseCorrection(ABC):
     def __init__(self):
+        # OCR初始化（通用印刷/手写体模型）
         self.ocr = PaddleOCR(
             use_angle_cls=True,
             lang="ch",
             show_log=False,
-            use_dilation=True,
-            det_db_unclip_ratio=2.2,
-            det_limit_side_len=1280,
-            det_db_score_mode="slow",
-            drop_score=0.4,
-            rec_batch_num=4
+            det_db_unclip_ratio=2.0,
+            det_limit_side_len=1200,
+            drop_score=0.4
         )
-        self.question_type = "基础题型"
-        self.total_score = 10.0
 
+    # ----------------------【1. 通用配置接口：子类必须实现】----------------------
+    @abstractmethod
+    def get_allowed_chars(self):
+        """
+        获取【本题型合法字符集】（通用接口）
+        return: dict 含 en, cn, symbols
+        """
+        return {
+            "en": "",    # 允许的英文字符/串
+            "cn": "",    # 允许的中文字符
+            "symbols": ""# 允许的符号
+        }
+
+    @abstractmethod
+    def get_standard_terms(self):
+        """
+        获取【本题型标准术语表】（通用接口）
+        return: list 标准术语
+        """
+        return []
+
+    @abstractmethod
+    def get_protocol_type(self):
+        """
+        获取【协议类型标识】（通用接口）
+        return: str TCP/HTTP/DNS等
+        """
+        return "UNKNOWN"
+
+    # ----------------------【2. 图像预处理（优化版，不粘连符号）】----------------------
     def _preprocess_image(self, img_path):
         img = cv2.imread(img_path)
         if img is None:
-            raise ValueError(f"无法读取图片：{img_path}")
+            raise ValueError("图片读取失败")
 
+        # 适度放大，提升细节
         h, w = img.shape[:2]
-        if h < 600 or w < 800:
-            img = cv2.resize(img, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+        if max(h, w) < 800:
+            img = cv2.resize(img, None, fx=1.2, fy=1.2, interpolation=cv2.INTER_CUBIC)
 
+        # 灰度 + 极小模糊（保细节、去噪）
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (3, 3), 0)#高斯模糊调小
+        gray = cv2.GaussianBlur(gray, (1, 1), 0)
 
+        # 二值化（保笔画清晰）
         binary = cv2.adaptiveThreshold(
             gray, 255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY_INV,
-            blockSize=21,
-            C=4
+            blockSize=19,
+            C=3
         )
 
-        kernel = np.ones((1, 1), np.uint8)#膨胀变细
-        binary = cv2.dilate(binary, kernel, iterations=1)
-        binary = cv2.bitwise_not(binary)
-        processed_img = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+        # 极轻膨胀（不粘连 = -）
+        kernel = np.ones((1, 1), np.uint8)
+        thin_img = cv2.dilate(binary, kernel, iterations=1)
 
-        return processed_img
+        # 转回彩色格式
+        result = cv2.bitwise_not(thin_img)
+        return cv2.cvtColor(result, cv2.COLOR_GRAY2BGR)
 
+    # ----------------------【3. 文本智能分析（核心：只判断、不修改）】----------------------
+    def analyze_text(self, text):
+        text = text.strip()
+        allowed = self.get_allowed_chars()
+        standards = self.get_standard_terms()
+        result = {
+            "valid": True,
+            "illegal_cn": False,
+            "similar_term": None,
+            "message": "识别正常"
+        }
+
+        # 1. 检查非法中文
+        cn_chars = re.findall(r"[\u4e00-\u9fa5]", text)
+        allowed_cn = allowed.get("cn", "")
+        for c in cn_chars:
+            if c not in allowed_cn and len(cn_chars) > 0:
+                result["valid"] = False
+                result["illegal_cn"] = True
+                result["message"] = "包含无关中文，可能识别错误"
+                return result
+
+        # 2. 检查是否接近标准术语，最短编辑距离匹配（最像哪个才提示哪个）
+        best_match = None
+        min_dist = 999
+        text_len = len(text)
+        if text_len >= 2:
+            sorted_terms = sorted(standards, key=lambda x: len(x), reverse=True)#长术语优先
+            for term in sorted_terms:
+                # 长文本禁止匹配短术语
+                if text_len >= 6 and len(term) <= 3:
+                    continue
+                term_len = len(term)
+                # 长度差太大不匹配
+                if abs(term_len - text_len) > 3:
+                    continue
+                # 兼容：忽略符号、忽略大小写、更适合手写
+                t1 = text.replace('-', '').replace('=', '').upper()
+                t2 = term.replace('-', '').replace('=', '').upper()
+                dist = abs(len(t1) - len(t2))
+                min_len = min(len(t1), len(t2))
+                for i in range(min_len):
+                    if t1[i] != t2[i]:
+                        dist += 1
+                if dist < min_dist:
+                    min_dist = dist
+                    best_match = term
+            if best_match and min_dist <= 2:
+                result["similar_term"] = best_match
+                result["message"] = f"接近标准术语: {best_match}"
+
+        return result
+
+    # ----------------------【4. OCR识别 + 坐标合并】----------------------
     def extract_text_with_coords(self, img_path):
         try:
-            processed_img = self._preprocess_image(img_path)
-            result = self.ocr.ocr(processed_img, cls=True)
-            if not result: return {}, []
-            result = result[0]
+            processed = self._preprocess_image(img_path)
+            ocr_results = self.ocr.ocr(processed, cls=True)
+            if not ocr_results or len(ocr_results) == 0:
+                return [], processed
 
-            # ========== 第一次遍历：正常提取 ==========
             items = []
-            for line in result:
+            for line in ocr_results[0]:
                 bbox = line[0]
-                text = line[1][0]
-                score = line[1][1]
-                if score < 0.45: continue
-                text = self._clean_text(text)
-                if not text: continue
+                text = str(line[1][0]).strip()
+                score = float(line[1][1])
 
-                x1, y1 = bbox[0]
-                x3, y3 = bbox[2]
-                cx = (x1 + x3) / 2
-                cy = (y1 + y3) / 2
-                items.append([text, cx, cy, bbox])
-
-            # ========== 第二次遍历：全局合并（你要的功能） ==========
-            merged = []
-            skip = set()
-            n = len(items)
-
-            for i in range(n):
-                if i in skip: continue
-                t1, cx1, cy1, b1 = items[i]
-
-                # 寻找以“-”结尾的，向后3行找同列匹配
-                best_match = -1
-                min_dx = 999
-
-                if t1.endswith("-"):
-                    for j in range(i+1, min(i+4, n)):
-                        if j in skip: continue
-                        t2, cx2, cy2, b2 = items[j]
-                        dx = abs(cx2 - cx1)
-                        dy = abs(cy2 - cy1)
-                        if dx < 100 and dy < 120:  # 同列、接近
-                            if dx < min_dx:
-                                min_dx = dx
-                                best_match = j
-
-                # 找到就合并
-                if best_match != -1:
-                    t2, cx2, cy2, b2 = items[best_match]
-                     # ✅ 保留 `-`，直接拼接
-                    new_text = t1 + t2  
-
-                    # 合并坐标
-                    x_min = min(b1[0][0], b2[0][0])
-                    y_min = min(b1[0][1], b2[0][1])
-                    x_max = max(b1[2][0], b2[2][0])
-                    y_max = max(b1[2][1], b2[2][1])
-                    new_bbox = [[x_min,y_min],[x_max,y_min],[x_max,y_max],[x_min,y_max]]
-                    new_cx = (x_min+x_max)/2
-                    new_cy = (y_min+y_max)/2
-
-                    merged.append([new_text, new_cx, new_cy, new_bbox])
-                    skip.add(i)
-                    skip.add(best_match)
+                if score < 0.4 or len(text) < 1:
                     continue
 
-                merged.append([t1, cx1, cy1, b1])
+                # 清洗无关符号
+                # 【修复】保留 空格 + 逗号，不让字母粘在一起
+                clean_text = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fa5\-=, ]", "", text)
+                if len(clean_text) < 1:
+                    continue
 
-            # 构建输出
-            text_coords = {}
-            all_results = []
+                # 计算中心坐标
+                x1, y1 = bbox[0]
+                x3, y3 = bbox[2]
+                cx = round((x1 + x3) / 2, 1)
+                cy = round((y1 + y3) / 2, 1)
+
+                # 文本分析
+                analyze = self.analyze_text(clean_text)
+
+                items.append({
+                    "text": clean_text,
+                    "cx": cx,
+                    "cy": cy,
+                    "bbox": bbox,
+                    "confidence": round(score, 2),
+                    "valid": analyze["valid"],
+                    "message": analyze["message"],
+                    "similar_term": analyze["similar_term"]
+                })
+
+            # 同类项合并（同列、以-结尾，温和合并）
+            merged = self._merge_items(items)
+
+            # 【合并完了，再统一分析！】
             for item in merged:
-                t, cx, cy, bbox = item
-                text_coords[t] = (cx, cy, bbox)
-                all_results.append((t, cx, cy, bbox))
-
-            return text_coords, all_results
+                analyze = self.analyze_text(item["text"])
+                item["valid"] = analyze["valid"]
+                item["message"] = analyze["message"]
+                item["similar_term"] = analyze["similar_term"]
+            return merged, processed
 
         except Exception as e:
-            raise Exception(f"OCR识别失败：{str(e)}")
+            print(f"识别异常: {str(e)}")
+            return [], None
 
-    def _clean_text(self, text):
-        text = text.strip()
-        text = re.sub(r"\s+", "", text)
-        text = re.sub(r"[，。！？；：、—～·\(\)\[\]【】]", "", text)
-        text = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fa5\-\=]", "", text)
-        return text
+    def _merge_items(self, items):
+        if len(items) < 2:
+            return items
 
-    def load_image(self, img_path, canvas=None):
-        try:
-            img = Image.open(img_path)
-            if canvas:
-                canvas_w = canvas.winfo_width() or 600
-                canvas_h = canvas.winfo_height() or 800
-                img.thumbnail((canvas_w, canvas_h), Image.Resampling.LANCZOS)
-            return img
-        except Exception as e:
-            raise Exception(f"图片加载失败：{str(e)}")
+        merged = []
+        skip_idx = set()
+        n = len(items)
 
-    @abstractmethod
-    def get_standard_rules(self): pass
-    @abstractmethod
-    def match_keywords(self, text_coords): pass
-    @abstractmethod
-    def check_structure(self, text_coords): pass
-    @abstractmethod
-    def check_detail(self, text_coords): pass
-    @abstractmethod
-    def calculate_score(self, kw_score, struct_score, detail_score): pass
+        for i in range(n):
+            if i in skip_idx:
+                continue
+
+            current = items[i]
+            text1 = current["text"]
+            cx1 = current["cx"]
+            cy1 = current["cy"]
+            bbox1 = current["bbox"]
+
+            # ----------------------
+            # 【末尾带 - → 尝试合并】
+            # ----------------------
+            if text1.endswith("-"):
+                # 往后找 2 行内、同一列的词
+                for j in range(i + 1, min(i + 3, n)):
+                    if j in skip_idx:
+                        continue
+
+                    target = items[j]
+                    text2 = target["text"]
+                    cx2 = target["cx"]
+                    bbox2 = target["bbox"]
+
+                    # 同一列（X 接近）
+                    if abs(cx2 - cx1) < 100:
+                        # 合并文字
+                        new_text = text1 + text2
+
+                        # 合并坐标（生成大框）
+                        x_min = min(bbox1[0][0], bbox2[0][0])
+                        y_min = min(bbox1[0][1], bbox2[0][1])
+                        x_max = max(bbox1[2][0], bbox2[2][0])
+                        y_max = max(bbox1[2][1], bbox2[2][1])
+
+                        new_bbox = [
+                            [x_min, y_min],
+                            [x_max, y_min],
+                            [x_max, y_max],
+                            [x_min, y_max]
+                        ]
+
+                        new_cx = (x_min + x_max) / 2
+                        new_cy = (y_min + y_max) / 2
+
+                        # 新条目（复制属性）
+                        new_item = current.copy()
+                        new_item["text"] = new_text
+                        new_item["cx"] = new_cx
+                        new_item["cy"] = new_cy
+                        new_item["bbox"] = new_bbox
+
+                        merged.append(new_item)
+
+                        # 跳过两个旧条目
+                        skip_idx.add(i)
+                        skip_idx.add(j)
+                        break
+                continue
+
+            # 不需要合并 → 直接加
+            merged.append(current)
+
+        return merged
+
+    # ----------------------【5. 工具方法】----------------------
+    def load_image(self, img_path):
+        return cv2.imread(img_path)

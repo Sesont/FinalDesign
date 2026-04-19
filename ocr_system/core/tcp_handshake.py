@@ -1,23 +1,57 @@
 # -*- coding: utf-8 -*-
 """
 TCP三次握手专属校正逻辑
-继承BaseCorrection，实现TCP题型的专属方法
+继承BaseCorrection，实现TCP专属方法
+适配新版 base_correction（通用白名单 + 术语库 + 协议类型）
 """
-import re  # 正则表达式模块
-
-
+import re
 from .base_correction import BaseCorrection
 
 class TCPHandshakeCorrection(BaseCorrection):
     """TCP三次握手校正类"""
     def __init__(self):
         super().__init__()
-        # 重写题型名称
         self.question_type = "TCP三次握手"
-        # 重写总分（可自定义）
         self.total_score = 10.0
 
-    # ===================== TCP专属规则 =====================
+    # ===================== 新版基类必须实现的 3 个通用接口 =====================
+    def get_allowed_chars(self):
+        """
+        【本题型允许出现的合法字符】
+        不在里面的中文 → 标记非法
+        """
+        return {
+            "en": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+            "cn": "客户端服务端主动打开被动打开数据传输AB",
+            "symbols": "-="
+        }
+
+    def get_standard_terms(self):
+        """
+        【本题型标准术语库】
+        用于识别提示：接近某个标准词
+        """
+        return [
+            "CLOSED",
+            "LISTEN",
+            "SYN-SENT",
+            "SYN-RCVD",
+            "ESTABLISHED",
+            "ACK",
+            "SYN",
+            "FIN",
+            "SEQ",
+            "主动打开",
+            "被动打开",
+            "数据传输",
+            "客户端",
+            "服务端"
+        ]
+
+    def get_protocol_type(self):
+        return "TCP三次握手"
+
+    # ===================== 你原来的 TCP 专属规则（完全不动） =====================
     def get_standard_rules(self):
         """TCP三次握手专属规则"""
         return {
@@ -44,9 +78,8 @@ class TCPHandshakeCorrection(BaseCorrection):
             }
         }
 
-    # ===================== TCP专属校验 =====================
+    # ===================== 你原来的判分逻辑（完全不动） =====================
     def match_keywords(self, text_coords):
-        """TCP关键词匹配（4分）"""
         rules = self.get_standard_rules()
         match_result = {
             "subject": {"hit": [], "miss": []},
@@ -57,14 +90,12 @@ class TCPHandshakeCorrection(BaseCorrection):
         }
         all_text = " ".join(text_coords.keys()).upper()
 
-        # 核心关键词匹配
         for kw in rules["core_keywords"]:
             if kw in all_text or re.search(kw.replace("=", "\="), all_text):
                 match_result["core"]["hit"].append(kw)
             else:
                 match_result["core"]["miss"].append(kw)
 
-        # 分类关键词匹配
         for key in ["subject", "state", "packet", "flow"]:
             for kw in rules["keywords"][key]:
                 if kw in all_text or re.search(kw.replace("=", "\="), all_text):
@@ -72,7 +103,6 @@ class TCPHandshakeCorrection(BaseCorrection):
                 else:
                     match_result[key]["miss"].append(kw)
 
-        # 计算关键词得分（0-4分）
         keyword_score = 0
         if len(match_result["subject"]["hit"]) >= 1:
             keyword_score += 1
@@ -87,7 +117,6 @@ class TCPHandshakeCorrection(BaseCorrection):
         return match_result, min(keyword_score, 4)
 
     def check_structure(self, text_coords):
-        """TCP结构校验（4分）"""
         rules = self.get_standard_rules()
         struct_result = {
             "pos": {"pass": False, "reason": ""},
@@ -97,7 +126,6 @@ class TCPHandshakeCorrection(BaseCorrection):
         }
         struct_score = 0
 
-        # 1. 客户端/服务端位置
         client_x = [x for text, (x, y, bbox) in text_coords.items() if any(kw in text for kw in ["客户端", "A"])]
         server_x = [x for text, (x, y, bbox) in text_coords.items() if any(kw in text for kw in ["服务端", "B"])]
         if client_x and server_x:
@@ -111,7 +139,6 @@ class TCPHandshakeCorrection(BaseCorrection):
         else:
             struct_result["pos"]["reason"] = "未识别到客户端/服务端"
 
-        # 2. 客户端状态顺序
         client_states = [(text, y) for text, (x, y, bbox) in text_coords.items() if text in rules["state_order"]["client"]]
         if len(client_states) >= 3:
             sorted_states = sorted(client_states, key=lambda s: s[1])
@@ -124,7 +151,6 @@ class TCPHandshakeCorrection(BaseCorrection):
         else:
             struct_result["client_state"]["reason"] = f"状态数不足：{len(client_states)}"
 
-        # 3. 服务端状态顺序
         server_states = [(text, y) for text, (x, y, bbox) in text_coords.items() if text in rules["state_order"]["server"]]
         if len(server_states) >= 4:
             sorted_states = sorted(server_states, key=lambda s: s[1])
@@ -137,7 +163,6 @@ class TCPHandshakeCorrection(BaseCorrection):
         else:
             struct_result["server_state"]["reason"] = f"状态数不足：{len(server_states)}"
 
-        # 4. 报文顺序
         packets = [(text, y) for text, (x, y, bbox) in text_coords.items() if any(kw in text for kw in ["SYN=1", "ACK=1", "seq=", "ack="])]
         if len(packets) >= 3:
             sorted_packets = sorted(packets, key=lambda p: p[1])
@@ -152,7 +177,6 @@ class TCPHandshakeCorrection(BaseCorrection):
         return struct_result, min(struct_score, 4)
 
     def check_detail(self, text_coords):
-        """TCP报文细节校验（2分）"""
         rules = self.get_standard_rules()
         detail_result = {
             "packet1": {"pass": False, "reason": ""},
@@ -163,28 +187,24 @@ class TCPHandshakeCorrection(BaseCorrection):
         detail_score = 0
         all_text = " ".join(text_coords.keys())
 
-        # 第一次握手
         if "SYN=1" in all_text and "seq=x" in all_text:
             detail_result["packet1"]["pass"] = True
             detail_score += 0.5
         else:
             detail_result["packet1"]["reason"] = "缺失SYN=1或seq=x"
 
-        # 第二次握手
         if all(kw in all_text for kw in ["SYN=1", "ACK=1", "ack=x+1"]):
             detail_result["packet2"]["pass"] = True
             detail_score += 0.5
         else:
             detail_result["packet2"]["reason"] = "缺失SYN=1/ACK=1/ack=x+1"
 
-        # 第三次握手
         if "ACK=1" in all_text and "ack=y+1" in all_text:
             detail_result["packet3"]["pass"] = True
             detail_score += 0.5
         else:
             detail_result["packet3"]["reason"] = "缺失ACK=1或ack=y+1"
 
-        # 数据传输
         if any(kw in all_text for kw in ["数据传输", "数据通信"]):
             detail_result["flow"]["pass"] = True
             detail_score += 0.5
@@ -194,6 +214,5 @@ class TCPHandshakeCorrection(BaseCorrection):
         return detail_result, min(detail_score, 2)
 
     def calculate_score(self, kw_score, struct_score, detail_score):
-        """TCP评分计算（总分=关键词+结构+细节）"""
         total = kw_score + struct_score + detail_score
         return round(total, 1)

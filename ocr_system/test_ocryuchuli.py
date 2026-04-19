@@ -7,6 +7,24 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from core.base_correction import BaseCorrection
 
 class TestOCR(BaseCorrection):
+    # 实现基类的三个通用配置方法
+    def get_allowed_chars(self):
+        return {
+            "en": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+            "cn": "客户端服务器主动打开被动打开数据传输",
+            "symbols": "-="
+        }
+
+    def get_standard_terms(self):
+        return [
+            "CLOSED", "LISTEN", "SYN-SENT", "SYN-RCVD", "ESTABLISHED",
+            "ACK", "SYN", "FIN", "SEQ", "数据传输"
+        ]
+
+    def get_protocol_type(self):
+        return "TCP_TEST"
+
+    # 你原来的抽象方法保留
     def get_standard_rules(self): return {}
     def match_keywords(self, text_coords): return {}, 0
     def check_structure(self, text_coords): return {}, 0
@@ -22,22 +40,30 @@ if __name__ == "__main__":
     if not os.path.exists(img_path):
         print("文件不存在")
         sys.exit()
+    
+    #测试base_correction
+    #ocr = TestOCR()
 
-    ocr = TestOCR()
+    #测试tcp三次握手
+    from core.tcp_handshake import TCPHandshakeCorrection
+    ocr = TCPHandshakeCorrection()
 
-    # 1. 拿到预处理后的图
-    processed = ocr._preprocess_image(img_path)
 
-    # 2. 显示图片
-    cv2.imshow("预处理后的图片（送给OCR）", processed)
+    # 识别
+    results, processed = ocr.extract_text_with_coords(img_path)
 
-    # 3. OCR 识别 + 合并
-    text_coords, all_results = ocr.extract_text_with_coords(img_path)
+    # 显示预处理图
+    if processed is not None:
+        cv2.imshow("预处理后的图片（送给OCR）", processed)
 
-    # 4. 输出结果
+    # 输出新版识别结果（带提示）
     print("\n识别结果：")
-    for i, (text, cx, cy, bbox) in enumerate(all_results, 1):
-        print(f"第{i:2d}条 | {text:20} | X={cx:4.0f} Y={cy:4.0f}")
+    for i, item in enumerate(results, 1):
+        text = item["text"]
+        cx = item["cx"]
+        cy = item["cy"]
+        msg = item["message"]
+        print(f"第{i:2d}条 | {text:20} | X={cx:4.0f} Y={cy:4.0f} | {msg}")
 
     print("\n按任意键关闭图片退出...")
     cv2.waitKey(0)
