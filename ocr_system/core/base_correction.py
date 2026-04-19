@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 基础校正框架（所有题型通用）
-【已优化：带 - 自动粘合下一行文字，解决 SYN- SENT / SY- NSENT 问题】
+【终极双遍历合并版：支持隔行合并、只保留合并结果、自动生成坐标】
 """
 from abc import ABC, abstractmethod
 from paddleocr import PaddleOCR
@@ -11,9 +11,7 @@ import numpy as np
 import re
 
 class BaseCorrection(ABC):
-    """基础校正抽象类（定义通用接口）"""
     def __init__(self):
-        # 手写题专用 OCR 参数
         self.ocr = PaddleOCR(
             use_angle_cls=True,
             lang="ch",
@@ -59,85 +57,88 @@ class BaseCorrection(ABC):
         try:
             processed_img = self._preprocess_image(img_path)
             result = self.ocr.ocr(processed_img, cls=True)
-
-            if not result or len(result) == 0 or result[0] is None:
-                return {}, []
-
+            if not result: return {}, []
             result = result[0]
-            items = []
 
+            # ========== 第一次遍历：正常提取 ==========
+            items = []
             for line in result:
                 bbox = line[0]
                 text = line[1][0]
                 score = line[1][1]
-
-                if score < 0.45:
-                    continue
-
+                if score < 0.45: continue
                 text = self._clean_text(text)
-                if not text:
-                    continue
+                if not text: continue
 
-                # 取框的四个点
                 x1, y1 = bbox[0]
-                x2, y2 = bbox[1]
                 x3, y3 = bbox[2]
-                x4, y4 = bbox[3]
-
-                # 计算中心点
                 cx = (x1 + x3) / 2
                 cy = (y1 + y3) / 2
+                items.append([text, cx, cy, bbox])
 
-                # 保存：文本, 中心点x, 中心点y, 框
-                items.append((text, cx, cy, bbox))
-
-            # ===================== 🔥 最终正确合并规则 =====================
-            # 1. 只有 末尾以 "-" 结尾
-            # 2. 且 下一行在垂直方向很近
-            # 3. 同一行左右的内容 绝不合并
+            # ========== 第二次遍历：全局合并（你要的功能） ==========
             merged = []
-            skip_next = False
-            for i in range(len(items)):
-                if skip_next:
-                    skip_next = False
+            skip = set()
+            n = len(items)
+
+            for i in range(n):
+                if i in skip: continue
+                t1, cx1, cy1, b1 = items[i]
+
+                # 寻找以“-”结尾的，向后3行找同列匹配
+                best_match = -1
+                min_dx = 999
+
+                if t1.endswith("-"):
+                    for j in range(i+1, min(i+4, n)):
+                        if j in skip: continue
+                        t2, cx2, cy2, b2 = items[j]
+                        dx = abs(cx2 - cx1)
+                        dy = abs(cy2 - cy1)
+                        if dx < 100 and dy < 120:  # 同列、接近
+                            if dx < min_dx:
+                                min_dx = dx
+                                best_match = j
+
+                # 找到就合并
+                if best_match != -1:
+                    t2, cx2, cy2, b2 = items[best_match]
+                    new_text = t1[:-1] + t2  # 去掉“-”再合并
+
+                    # 合并坐标
+                    x_min = min(b1[0][0], b2[0][0])
+                    y_min = min(b1[0][1], b2[0][1])
+                    x_max = max(b1[2][0], b2[2][0])
+                    y_max = max(b1[2][1], b2[2][1])
+                    new_bbox = [[x_min,y_min],[x_max,y_min],[x_max,y_max],[x_min,y_max]]
+                    new_cx = (x_min+x_max)/2
+                    new_cy = (y_min+y_max)/2
+
+                    merged.append([new_text, new_cx, new_cy, new_bbox])
+                    skip.add(i)
+                    skip.add(best_match)
                     continue
 
-                text1, cx1, cy1, bbox1 = items[i]
+                merged.append([t1, cx1, cy1, b1])
 
-                # ----------------------- 核心修复：只合并 【末尾- + 下一行】 -----------------------
-                if text1.endswith("-") and i + 1 < len(items):
-                    text2, cx2, cy2, bbox2 = items[i+1]
-
-                    # 垂直距离近（真正是换行），水平可以随便
-                    delta_y = abs(cy2 - cy1)
-                    if delta_y < 40:  # 行间距小 = 是上下关系
-                        # 合并！
-                        combined = text1 + text2
-                        merged.append((combined, cx1, cy1, bbox1))
-                        skip_next = True
-                        continue
-
-                # 不满足合并条件，直接加入
-                merged.append(items[i])
-
-            # 构建结果
+            # 构建输出
             text_coords = {}
             all_results = []
-            for text, cx, cy, bbox in merged:
-                text_coords[text] = (cx, cy, bbox)
-                all_results.append((text, cx, cy, 1.0))
+            for item in merged:
+                t, cx, cy, bbox = item
+                text_coords[t] = (cx, cy, bbox)
+                all_results.append((t, cx, cy, bbox))
 
             return text_coords, all_results
 
         except Exception as e:
             raise Exception(f"OCR识别失败：{str(e)}")
 
-
     def _clean_text(self, text):
         text = text.strip()
         text = re.sub(r"\s+", "", text)
         text = re.sub(r"[，。！？；：、—～·\(\)\[\]【】]", "", text)
-        text = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fa5\-]", "", text)
+        text = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fa5\-\=]", "", text)
         return text
 
     def load_image(self, img_path, canvas=None):
@@ -152,21 +153,12 @@ class BaseCorrection(ABC):
             raise Exception(f"图片加载失败：{str(e)}")
 
     @abstractmethod
-    def get_standard_rules(self):
-        pass
-
+    def get_standard_rules(self): pass
     @abstractmethod
-    def match_keywords(self, text_coords):
-        pass
-
+    def match_keywords(self, text_coords): pass
     @abstractmethod
-    def check_structure(self, text_coords):
-        pass
-
+    def check_structure(self, text_coords): pass
     @abstractmethod
-    def check_detail(self, text_coords):
-        pass
-
+    def check_detail(self, text_coords): pass
     @abstractmethod
-    def calculate_score(self, kw_score, struct_score, detail_score):
-        pass
+    def calculate_score(self, kw_score, struct_score, detail_score): pass
