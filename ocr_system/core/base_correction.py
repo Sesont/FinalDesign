@@ -36,7 +36,7 @@ class BaseCorrection(ABC):
             img = cv2.resize(img, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)#高斯模糊调小
 
         binary = cv2.adaptiveThreshold(
             gray, 255,
@@ -46,7 +46,7 @@ class BaseCorrection(ABC):
             C=4
         )
 
-        kernel = np.ones((2, 2), np.uint8)
+        kernel = np.ones((1, 1), np.uint8)#膨胀变细
         binary = cv2.dilate(binary, kernel, iterations=1)
         binary = cv2.bitwise_not(binary)
         processed_img = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
@@ -103,7 +103,8 @@ class BaseCorrection(ABC):
                 # 找到就合并
                 if best_match != -1:
                     t2, cx2, cy2, b2 = items[best_match]
-                    new_text = t1[:-1] + t2  # 去掉“-”再合并
+                     # ✅ 保留 `-`，直接拼接
+                    new_text = t1 + t2  
 
                     # 合并坐标
                     x_min = min(b1[0][0], b2[0][0])
