@@ -66,3 +66,15 @@ class IPSubnetCorrection(BaseCorrection):
 
     def calculate_score(self, kw_score, struct_score, detail_score):
         return round(kw_score+struct_score+detail_score,1)
+    
+    def get_allowed_chars(self):
+        return set("0123456789./")
+
+    def get_protocol_type(self):
+        return "子网划分/IP计算"
+
+    def get_standard_terms(self):
+        return {
+            "subnet": ["网络位", "主机位", "子网掩码", "网段", "广播地址"],
+            "calc": ["255.255.255.0", "/24"]
+        }

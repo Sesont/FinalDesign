@@ -67,3 +67,15 @@ class HTTPHTTPSCorrection(BaseCorrection):
 
     def calculate_score(self, kw_score, struct_score, detail_score):
         return round(kw_score+struct_score+detail_score,1)
+    
+    def get_allowed_chars(self):
+        return set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789端口加密明文")
+
+    def get_protocol_type(self):
+        return "HTTP与HTTPS区别"
+
+    def get_standard_terms(self):
+        return {
+            "http": ["80", "明文", "无加密"],
+            "https": ["443", "加密", "SSL", "TLS"]
+    }

@@ -111,3 +111,15 @@ class TCPCongestionCorrection(BaseCorrection):
     def calculate_score(self, kw_score, struct_score, detail_score):
         total = kw_score + struct_score + detail_score
         return round(total, 1)
+    
+    def get_allowed_chars(self):
+        return set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789慢开始拥塞避免快重传快恢复")
+
+    def get_protocol_type(self):
+        return "TCP拥塞控制"
+
+    def get_standard_terms(self):
+        return {
+            "stages": ["慢开始", "拥塞避免", "快重传", "快恢复"],
+            "keywords": ["ssthresh", "cwnd"]
+    }

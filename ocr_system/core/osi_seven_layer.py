@@ -206,3 +206,15 @@ class OSISevenLayerCorrection(BaseCorrection):
         """OSI评分计算（总分=关键词+结构+细节）"""
         total = kw_score + struct_score + detail_score
         return round(total, 1)
+    
+    def get_allowed_chars(self):
+        return set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789层应用表示会话传输网络数据链路物理")
+
+    def get_protocol_type(self):
+        return "OSI七层模型"
+
+    def get_standard_terms(self):
+        return {
+            "layers": ["应用层", "表示层", "会话层", "传输层", "网络层", "数据链路层", "物理层"],
+            "order": [7,6,5,4,3,2,1]
+    }

@@ -24,18 +24,14 @@ class TCPHandshakeCorrection(BaseCorrection):
     def get_protocol_type(self):
         return "TCP_THREE_WAY_HANDSHAKE"
 
-    # ===================== 【真正生效】精准修正 =====================
     def fix_word(self, text):
-        t = text.upper()
-
-        # 1. 数字混淆：只在等号后修正 L → 1
+        t = str(text).upper()
         t = re.sub(r'ACK=L', 'ACK=1', t)
         t = re.sub(r'SYN=L', 'SYN=1', t)
         t = re.sub(r'SEQ=L', 'SEQ=1', t)
         t = re.sub(r'ACK=I', 'ACK=1', t)
         t = re.sub(r'SYN=I', 'SYN=1', t)
 
-        # 2. 典型OCR错误（状态词）
         fix_map = {
             "LNAS": "SYN-SENT",
             "-NAS": "SYN-SENT",
@@ -45,40 +41,36 @@ class TCPHandshakeCorrection(BaseCorrection):
             "SEG": "SEQ",
             "XTL": "X+1",
             "YT1": "Y+1",
-            "ACK=YT1": "ACK=Y+1",
         }
         for wrong, right in fix_map.items():
             t = t.replace(wrong, right)
         return t
 
-    # ===================== 判分用：修正后的文本 =====================
-    def get_fixed_text_list(self, original_coords):
-        fixed = []
-        for text in original_coords.keys():
-            fixed_text = self.fix_word(text)
-            fixed.append(fixed_text)
-        return fixed
+    def extract_text_list(self, ocr_items):
+        texts = []
+        for item in ocr_items:
+            if isinstance(item, dict) and "text" in item:
+                texts.append(item["text"])
+            else:
+                texts.append(str(item))
+        return texts
 
-    # ===================== 你的原有规则（完全不变） =====================
     def get_standard_rules(self):
         return {
             "keywords": {
-                "subject": ["客户端", "服务端", "A", "B", "客户机", "服务器"],
-                "state": ["CLOSED", "SYN-SENT", "LISTEN", "SYN-RCVD", "ESTABLISHED"],
-                "packet": ["SYN=1", "ACK=1", "seq=x", "seq=y", "ack=x+1", "ack=y+1"],
-                "flow": ["主动打开", "被动打开", "数据传输"]
+                "subject": ["客户端", "服务端", "A", "B"],
+                "state": ["CLOSED","SYN-SENT","LISTEN","SYN-RCVD","ESTABLISHED"],
+                "packet": ["SYN=1", "ACK=1"],
             },
             "core_keywords": ["SYN=1", "ACK=1", "客户端", "服务端", "ESTABLISHED"],
-            "state_order": {
-                "client": ["CLOSED", "SYN-SENT", "ESTABLISHED"],
-                "server": ["CLOSED", "LISTEN", "SYN-RCVD", "ESTABLISHED"]
-            },
-            "score_rules": {"keyword":4,"structure":4,"packet_detail":2}
         }
 
-    def match_keywords(self, fixed_list):
+    def match_keywords(self, ocr_items):
+        text_list = self.extract_text_list(ocr_items)
+        fixed = [self.fix_word(t) for t in text_list]
+        all_text = " ".join(fixed).upper()
         rules = self.get_standard_rules()
-        all_text = " ".join(fixed_list).upper()
+        
         hit = []
         miss = []
         for kw in rules["core_keywords"]:
@@ -88,51 +80,73 @@ class TCPHandshakeCorrection(BaseCorrection):
                 miss.append(kw)
 
         score = 0
-        if any(s in all_text for s in ["客户端","客户机","服务端","服务器"]):
+        if any(s in all_text for s in ["客户端", "客户机", "服务端", "服务器"]):
             score +=1
-        state_hit = sum(1 for s in ["CLOSED","SYN-SENT","LISTEN","SYN-RCVD","ESTABLISHED"] if s in all_text)
-        if state_hit >=3: score +=1
-        packet_hit = sum(1 for p in ["SYN=1","ACK=1"] if p in all_text)
-        if packet_hit >=1: score +=2
-        return hit, miss, min(score,4)
+        state_hit = sum(1 for s in ["CLOSED","SYN-SENT","ESTABLISHED"] if s in all_text)
+        if state_hit >=2:
+            score +=1
+        if "SYN=1" in all_text: score +=1
+        if "ACK=1" in all_text: score +=1
+        return hit, miss, round(min(score,4),1), text_list, fixed
 
-    def check_structure(self, fixed_list):
-        all_text = " ".join(fixed_list).upper()
+    def check_structure(self, ocr_items):
+        text_list = self.extract_text_list(ocr_items)
+        fixed = [self.fix_word(t) for t in text_list]
+        all_text = " ".join(fixed).upper()
         score = 0
-        if "CLOSED" in all_text and "SYN-SENT" in all_text: score +=1
-        if "LISTEN" in all_text and "SYN-RCVD" in all_text: score +=1
-        if "SYN=1" in all_text and "ACK=1" in all_text: score +=2
-        return {}, min(score,4)
+        log = []
+        if "CLOSED" in all_text:
+            score +=1
+            log.append("✓ 存在CLOSED状态")
+        if "SYN-SENT" in all_text:
+            score +=1
+            log.append("✓ 存在SYN-SENT状态")
+        if "SYN-RCVD" in all_text:
+            score +=1
+            log.append("✓ 存在SYN-RCVD状态")
+        if "ESTABLISHED" in all_text:
+            score +=1
+            log.append("✓ 存在ESTABLISHED状态")
+        return {"log": log}, round(min(score,4),1)
 
-    def check_detail(self, fixed_list):
-        all_text = " ".join(fixed_list).upper()
+    def check_detail(self, ocr_items):
+        text_list = self.extract_text_list(ocr_items)
+        fixed = [self.fix_word(t) for t in text_list]
+        all_text = " ".join(fixed).upper()
         score = 0
-        if "SYN=1" in all_text: score +=0.5
-        if "ACK=1" in all_text: score +=0.5
-        if "SEQ=X" in all_text or "ACK=X+1" in all_text: score +=0.5
-        if "数据传输" in all_text: score +=0.5
-        return {}, min(score,2)
+        log = []
+        if "SYN=1" in all_text:
+            score +=0.5
+            log.append("✓ SYN=1报文")
+        if "ACK=1" in all_text:
+            score +=0.5
+            log.append("✓ ACK=1报文")
+        if "SEQ=X" in all_text or "ACK=X+1" in all_text:
+            score +=0.5
+            log.append("✓ 序号/确认号格式正确")
+        if "数据传输" in all_text:
+            score +=0.5
+            log.append("✓ 包含数据传输阶段")
+        return {"log": log}, round(min(score,2),1)
 
     def calculate_score(self, kw, st, dt):
         return round(kw + st + dt, 1)
 
-    # ===================== 正确返回：原始 + 修正 =====================
-    def correct(self, text_coords):
-        fixed_list = self.get_fixed_text_list(text_coords)
-        hit, miss, kw_score = self.match_keywords(fixed_list)
-        st_info, st_score = self.check_structure(fixed_list)
-        dt_info, dt_score = self.check_detail(fixed_list)
-        total = self.calculate_score(kw_score, st_score, dt_score)
+    def correct(self, ocr_items):
+        hit, miss, kw, original_text, fixed_text = self.match_keywords(ocr_items)
+        st_info, st = self.check_structure(ocr_items)
+        dt_info, dt = self.check_detail(ocr_items)
+        total = self.calculate_score(kw, st, dt)
 
         return {
-            "question": self.question_type,
-            "full_score": self.total_score,
             "score": total,
-            "keyword_score": kw_score,
-            "structure_score": st_score,
-            "detail_score": dt_score,
-            "original_words": list(text_coords.keys()),
-            "fixed_for_scoring": fixed_list,
+            "keyword_score": kw,
+            "structure_score": st,
+            "detail_score": dt,
             "hit_keywords": hit,
-            "miss_keywords": miss
+            "miss_keywords": miss,
+            "original_text": original_text,
+            "fixed_text": fixed_text,
+            "structure_log": st_info["log"],
+            "detail_log": dt_info["log"]
         }

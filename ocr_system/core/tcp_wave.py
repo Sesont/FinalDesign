@@ -174,3 +174,17 @@ class TCPWaveCorrection(BaseCorrection):
         """TCP四次挥手评分计算"""
         total = kw_score + struct_score + detail_score
         return round(total, 1)
+    
+    def get_allowed_chars(self):
+        return set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789=-_()[] ")
+
+    def get_protocol_type(self):
+        return "TCP四次挥手"
+
+    def get_standard_terms(self):
+        return {
+            "client_states": ["CLOSED", "FIN_WAIT_1", "FIN_WAIT_2", "TIME_WAIT"],
+            "server_states": ["LISTEN", "CLOSE_WAIT", "LAST_ACK", "CLOSED"],
+            "messages": ["FIN=1", "ACK=1", "seq", "ack"],
+            "keywords": ["客户端", "服务端", "主动关闭", "被动关闭"]
+    }

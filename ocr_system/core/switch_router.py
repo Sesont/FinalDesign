@@ -68,3 +68,15 @@ class SwitchRouterCorrection(BaseCorrection):
 
     def calculate_score(self, kw_score, struct_score, detail_score):
         return round(kw_score+struct_score+detail_score,1)
+    
+    def get_allowed_chars(self):
+        return set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789二层三层局域网广域网")
+
+    def get_protocol_type(self):
+        return "交换机vs路由器"
+
+    def get_standard_terms(self):
+        return {
+            "switch": ["二层", "MAC", "局域网"],
+            "router": ["三层", "IP", "广域网", "路由"]
+    }

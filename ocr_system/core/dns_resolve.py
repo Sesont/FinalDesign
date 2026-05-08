@@ -68,3 +68,15 @@ class DNSResolveCorrection(BaseCorrection):
 
     def calculate_score(self, kw_score, struct_score, detail_score):
         return round(kw_score+struct_score+detail_score,1)
+    
+    def get_allowed_chars(self):
+        return set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.本地根顶级权威")
+
+    def get_protocol_type(self):
+        return "DNS解析过程"
+
+    def get_standard_terms(self):
+        return {
+            "servers": ["本地DNS", "根服务器", "顶级域名服务器", "权威服务器"],
+            "steps": ["递归查询", "迭代查询"]
+    }
